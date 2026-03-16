@@ -1,19 +1,23 @@
 # Traefik — Reverse Proxy & Automatic TLS
 
-Traefik acts as the single entry point for all self-hosted services. It handles TLS certificate provisioning automatically via the Cloudflare DNS-01 challenge and routes traffic to internal containers using **file-based dynamic configuration** (`dyconfig/`).
+Traefik acts as the single entry point for all self-hosted services. It handles TLS certificate provisioning automatically via the Cloudflare DNS-01 challenge and routes all traffic through **file-based dynamic configuration** in the `dyconfig/` folder.
+
+> **This setup does not use Docker labels.** Every route is defined as a `.yml` file in `dyconfig/`. Traefik watches that folder and hot-reloads on any change — no restart needed, no container labels required.
+
+→ **To add or configure a service, see [`dyconfig/README.md`](dyconfig/README.md)**. It has copy-paste templates for both HTTP-backend and HTTPS-backend services with all fields annotated.
 
 ---
 
 ## Architecture
 
 ```
-Internet → Port 80/443 → Traefik → dyconfig/ routes → Internal containers
+Internet → Port 80/443 → Traefik → dyconfig/*.yml → Internal services
                               ↑
                     Cloudflare DNS-01
                     (wildcard cert for *.yourdomain.com)
 ```
 
-This setup uses the **file provider** (`dyconfig/`) for all routing rules rather than Docker labels. This keeps routing config version-controlled and decoupled from container lifecycle — a service doesn't need to be running for its route to be defined.
+Routing is decoupled from container lifecycle. A service doesn't need to be running for its route to be defined, and adding a route never touches `docker-compose.yml`.
 
 ---
 
@@ -118,63 +122,14 @@ On first start, Traefik requests your wildcard certificate from Let's Encrypt. T
 
 ---
 
-## Adding a Service via dyconfig
+## Adding a Service
 
-Create a new `.yml` file in your `dyconfig/` directory. Traefik hot-reloads this directory — no restart needed.
+All routing is managed through the `dyconfig/` folder. See **[`dyconfig/README.md`](dyconfig/README.md)** for:
 
-**Example: `dyconfig/myapp.yml`**
-
-```yaml
-http:
-  routers:
-    myapp:
-      rule: "Host(`myapp.yourdomain.com`)"
-      entryPoints:
-        - https
-      tls:
-        certResolver: cloudflare
-      service: myapp
-
-  services:
-    myapp:
-      loadBalancer:
-        servers:
-          - url: "http://192.168.1.100:8080"   # Internal IP:port of your service
-```
-
-**With HTTPS redirect from HTTP:**
-
-```yaml
-http:
-  routers:
-    myapp-http:
-      rule: "Host(`myapp.yourdomain.com`)"
-      entryPoints:
-        - http
-      middlewares:
-        - redirect-to-https
-      service: myapp
-
-    myapp-https:
-      rule: "Host(`myapp.yourdomain.com`)"
-      entryPoints:
-        - https
-      tls:
-        certResolver: cloudflare
-      service: myapp
-
-  services:
-    myapp:
-      loadBalancer:
-        servers:
-          - url: "http://192.168.1.100:8080"
-
-  middlewares:
-    redirect-to-https:
-      redirectScheme:
-        scheme: https
-        permanent: true
-```
+- Copy-paste templates for HTTP-backend and HTTPS-backend services
+- A full table of every field that needs to change (not just domain/IP — router names, service names, transport names)
+- The most common mistake (duplicate names across files) and how to avoid it
+- How to verify a new route loaded in the dashboard
 
 ---
 

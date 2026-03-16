@@ -1,0 +1,56 @@
+# _template-https.yml
+# Use this template when your backend service runs HTTPS with a self-signed certificate
+# (e.g. Proxmox, Portainer, pfSense, any service that enforces HTTPS internally).
+# insecureSkipVerify tells Traefik to accept the self-signed cert on the backend.
+#
+# ┌──────────────────────────────────────────────────────────────────────────────┐
+# │  STEP 1 — Pick your app prefix and replace APPNAME everywhere                │
+# │                                                                              │
+# │  Replace "APPNAME" with your app's short name (e.g. "proxmox", "portainer") │
+# │  The suffixes -rtr, -svc, -ws, -transport stay as-is — only APPNAME changes: │
+# │                                                                              │
+# │    APPNAME-rtr        →  proxmox-rtr        ← router name (unique per file) │
+# │    APPNAME-svc        →  proxmox-svc        ← service name (unique per file) │
+# │    APPNAME-ws         →  proxmox-ws         ← middleware name (unique)       │
+# │    APPNAME-transport  →  proxmox-transport  ← transport name (unique)        │
+# │                                                                              │
+# │  STEP 2 — Fill in the two values below                                      │
+# │                                                                              │
+# │    your.domain.com    →  proxmox.yourdomain.com  ← public hostname          │
+# │    192.168.X.X:PORT   →  192.168.1.10:8006       ← backend IP and port      │
+# └──────────────────────────────────────────────────────────────────────────────┘
+#
+# Save as: yourapp.yml  (drop the leading underscore)
+# Traefik picks it up automatically — no restart needed.
+
+http:
+  routers:
+    APPNAME-rtr:                          # ← replace APPNAME (keep -rtr)
+      entryPoints:
+        - https
+      rule: "Host(`your.domain.com`)"     # ← your public hostname
+      service: APPNAME-svc                # ← replace APPNAME (keep -svc)
+      tls:
+        certResolver: cloudflare          # Must match the certResolver name in traefik.yml
+      middlewares:
+        - APPNAME-ws                      # ← replace APPNAME (keep -ws)
+
+  middlewares:
+    APPNAME-ws:                           # ← replace APPNAME (keep -ws)
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+        customResponseHeaders:
+          X-Content-Type-Options: "nosniff"
+
+  services:
+    APPNAME-svc:                          # ← replace APPNAME (keep -svc)
+      loadBalancer:
+        passHostHeader: true
+        serversTransport: APPNAME-transport  # ← replace APPNAME (keep -transport)
+        servers:
+          - url: "https://192.168.X.X:PORT"  # ← backend IP and port (https://)
+
+serversTransports:
+  APPNAME-transport:                      # ← replace APPNAME (keep -transport)
+    insecureSkipVerify: true              # Accepts the self-signed cert on the backend

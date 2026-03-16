@@ -1,0 +1,38 @@
+# _template-http.yml
+# Use this template when your backend service runs plain HTTP (most Docker containers).
+# Traefik still terminates TLS on the frontend — the connection to YOUR service is HTTP.
+#
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │  STEP 1 — Pick your app prefix and replace APPNAME everywhere            │
+# │                                                                          │
+# │  Replace "APPNAME" with your app's short name (e.g. "grafana", "ghost") │
+# │  The suffixes -rtr and -svc stay as-is — only APPNAME changes:          │
+# │                                                                          │
+# │    APPNAME-rtr  →  grafana-rtr    ← router name (unique per file)       │
+# │    APPNAME-svc  →  grafana-svc    ← service name (unique per file)      │
+# │                                                                          │
+# │  STEP 2 — Fill in the two values below                                  │
+# │                                                                          │
+# │    your.domain.com    →  grafana.yourdomain.com  ← public hostname      │
+# │    192.168.X.X:PORT   →  192.168.1.50:3000       ← backend IP and port  │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Save as: yourapp.yml  (drop the leading underscore)
+# Traefik picks it up automatically — no restart needed.
+
+http:
+  routers:
+    APPNAME-rtr:                          # ← replace APPNAME (keep -rtr)
+      entryPoints:
+        - https
+      rule: "Host(`your.domain.com`)"     # ← your public hostname
+      service: APPNAME-svc                # ← replace APPNAME (keep -svc)
+      tls:
+        certResolver: cloudflare          # Must match the certResolver name in traefik.yml
+
+  services:
+    APPNAME-svc:                          # ← replace APPNAME (keep -svc)
+      loadBalancer:
+        servers:
+          - url: "http://192.168.X.X:PORT"  # ← backend IP and port (http://)
+        passHostHeader: true
