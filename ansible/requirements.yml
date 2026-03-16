@@ -1,0 +1,64 @@
+---
+# =============================================================================
+# ANSIBLE GALAXY REQUIREMENTS
+# homelab-iac | ansible/requirements.yml
+# =============================================================================
+#
+# WHAT THIS FILE DOES:
+#   Declares all external Ansible Collections this repository depends on.
+#   Install everything at once with:
+#
+#     ansible-galaxy collection install -r ansible/requirements.yml
+#
+#   Run this once on a fresh control node before executing any playbook.
+#   Re-run it after pulling updates to this repo to pick up new dependencies.
+#
+# PINNING VERSIONS:
+#   Version constraints follow semantic versioning (semver).
+#   '>=x.y.z' means "this version or newer" — recommended for homelabs.
+#   '==x.y.z' pins to an exact version — use this in production if you need
+#   strict reproducibility.
+#
+# UPGRADING COLLECTIONS:
+#   ansible-galaxy collection install -r ansible/requirements.yml --upgrade
+#
+# =============================================================================
+
+collections:
+
+  # ---------------------------------------------------------------------------
+  # community.docker
+  # Used by: provision_docker_node.yml, portainer_update.yml
+  # Provides: docker_container, docker_image, docker_network, docker_compose
+  # Docs: https://docs.ansible.com/ansible/latest/collections/community/docker/
+  # ---------------------------------------------------------------------------
+  - name: community.docker
+    version: ">=3.4.0"
+
+  # ---------------------------------------------------------------------------
+  # community.general
+  # Used by: general utility tasks across all playbooks
+  # Provides: a broad set of modules — ini_file, json_query, slack, ufw, etc.
+  # Docs: https://docs.ansible.com/ansible/latest/collections/community/general/
+  # ---------------------------------------------------------------------------
+  - name: community.general
+    version: ">=8.0.0"
+
+  # ---------------------------------------------------------------------------
+  # ansible.posix
+  # Used by: future hardening and system configuration playbooks
+  # Provides: authorized_key, sysctl, firewalld, mount, synchronize
+  # Docs: https://docs.ansible.com/ansible/latest/collections/ansible/posix/
+  # ---------------------------------------------------------------------------
+  - name: ansible.posix
+    version: ">=1.5.0"
+
+  # ---------------------------------------------------------------------------
+  # community.crypto
+  # Used by: future TLS / certificate automation playbooks
+  # Provides: openssl_certificate, x509_certificate, acme_certificate
+  # Relevant for: Traefik, internal CA, self-signed cert management
+  # Docs: https://docs.ansible.com/ansible/latest/collections/community/crypto/
+  # ---------------------------------------------------------------------------
+  - name: community.crypto
+    version: ">=2.15.0"

@@ -1,0 +1,101 @@
+---
+# provision_base.yml — Baseline configuration for Debian/Ubuntu hosts. See README.md.
+
+- name: Baseline provision — Debian / Ubuntu
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+
+  vars:
+    ssh_config_path: /etc/ssh/sshd_config
+    reboot_timeout: 300
+
+    # Packages installed on every managed host.
+    # Add or remove entries to match your environment.
+    base_packages:
+      - nano
+      - bash-completion
+      - curl
+      - unzip
+      - net-tools
+      - iputils-ping
+      - traceroute
+      - dnsutils
+      - qemu-guest-agent   # Required for Proxmox VM integration
+      - ca-certificates
+      - gnupg
+
+  tasks:
+
+    # ── Package Management ────────────────────────────────────────────────────
+
+    - name: Update apt package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600  # Skip update if cache is less than 1 hour old
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name: "{{ base_packages }}"
+        state: present
+
+    - name: Remove unused packages (autoremove)
+      ansible.builtin.apt:
+        autoremove: true
+
+    # ── QEMU Guest Agent ──────────────────────────────────────────────────────
+
+    - name: Enable and start qemu-guest-agent
+      ansible.builtin.systemd:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+      # Only relevant on VMs — ignore on bare-metal or LXC containers
+      failed_when: false
+
+    # ── SSH Hardening ─────────────────────────────────────────────────────────
+    # Enforces key-based authentication only.
+    # WARNING: Ensure your SSH public key is on the target BEFORE running this.
+    # Locking out password auth without a key deployed = no way back in.
+
+    - name: Enforce SSH — enable public key authentication
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PubkeyAuthentication'
+        line: 'PubkeyAuthentication yes'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart SSH
+
+    - name: Enforce SSH — disable password authentication
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart SSH
+
+    - name: Enforce SSH — disable root login
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart SSH
+
+    # ── Reboot ────────────────────────────────────────────────────────────────
+
+    - name: Reboot host and wait for it to return
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        msg: "Reboot triggered by provision_base.yml"
+
+    - name: Confirm host is back online
+      ansible.builtin.ping:
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: ssh
+        state: restarted

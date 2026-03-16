@@ -1,0 +1,57 @@
+# =============================================================================
+# traefik.yml.example — Traefik Static Configuration
+# homelab-iac | docker/traefik/traefik.yml.example
+# =============================================================================
+# Copy to traefik.yml and edit. This file is mounted read-only into the container.
+# Changes require a container restart to take effect.
+# =============================================================================
+
+# ── API & Dashboard ───────────────────────────────────────────────────────────
+api:
+  dashboard: true
+
+# ── Entry Points ──────────────────────────────────────────────────────────────
+entryPoints:
+  http:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: https
+          scheme: https
+
+  https:
+    address: ":443"
+
+# ── Providers ─────────────────────────────────────────────────────────────────
+providers:
+  # Docker provider — services self-register via container labels
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false   # Only route containers with traefik.enable=true
+
+  # File provider — static routes defined in the dyconfig/ directory
+  file:
+    directory: /dyconfig
+    watch: true   # Hot-reload config changes without restarting Traefik
+
+# ── TLS / Certificate Resolvers ───────────────────────────────────────────────
+certificatesResolvers:
+  cloudflare:
+    acme:
+      email: your-email@yourdomain.com   # Let's Encrypt notifications
+      storage: /acme.json
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log:
+  level: INFO   # Options: DEBUG, INFO, WARN, ERROR
+  filePath: /var/log/traefik/traefik.log
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+  bufferingSize: 100

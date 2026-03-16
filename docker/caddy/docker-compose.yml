@@ -1,0 +1,16 @@
+# Caddy — Automatic HTTPS reverse proxy
+# See README.md for Caddyfile examples and setup guide.
+
+services:
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ${CADDY_DATA_DIR}/Caddyfile:/etc/caddy/Caddyfile
+      - ${CADDY_DATA_DIR}/site:/srv
+      - ${CADDY_DATA_DIR}/data:/data
+      - ${CADDY_DATA_DIR}/config:/config
+    labels:
+      - "com.centurylinklabs.watchtower.monitor-only=true"

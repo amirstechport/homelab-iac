@@ -1,0 +1,117 @@
+---
+# nextcloud_maintenance.yml — Post-upgrade occ tasks and health check for Nextcloud. See README.md.
+
+- name: Nextcloud post-upgrade maintenance
+  hosts: "{{ target_hosts | default('nc') }}"
+  become: true
+
+  vars:
+    nc_container: "nc"
+    nc_web_user: "www-data"
+    disable_appapi: true
+    health_check_retries: 3
+    health_check_delay: 10
+
+  tasks:
+
+    # ── Pre-flight ────────────────────────────────────────────────────────────
+
+    - name: Verify Nextcloud container is running
+      ansible.builtin.command:
+        cmd: "docker inspect --format='{{ '{{' }}.State.Running{{ '}}' }}' {{ nc_container }}"
+      register: container_state
+      changed_when: false
+      failed_when: "'true' not in container_state.stdout"
+
+    # ── PART 1: Safety & DB Checks ────────────────────────────────────────────
+    tags: [db_checks]
+
+    - name: Run occ upgrade — finalize pending DB migrations
+      ansible.builtin.command:
+        cmd: "docker exec --user {{ nc_web_user }} {{ nc_container }} php occ upgrade"
+      register: upgrade_result
+      changed_when: "'Update successful' in upgrade_result.stdout"
+      failed_when: "'Maintenance mode is kept active' in upgrade_result.stdout"
+      tags: [db_checks]
+
+    - name: Add missing database indices
+      ansible.builtin.command:
+        cmd: "docker exec --user {{ nc_web_user }} {{ nc_container }} php occ db:add-missing-indices"
+      register: db_indices_result
+      changed_when: "'Added' in db_indices_result.stdout"
+      tags: [db_checks]
+
+    - name: Convert filecache to BigInt (prevents integer overflow on large libraries)
+      ansible.builtin.command:
+        cmd: "docker exec --user {{ nc_web_user }} {{ nc_container }} php occ db:convert-filecache-bigint --no-interaction"
+      register: bigint_result
+      changed_when: "'All tables already up to date' not in bigint_result.stdout"
+      tags: [db_checks]
+
+    - name: Report DB check results
+      ansible.builtin.debug:
+        msg:
+          - "occ upgrade: {{ upgrade_result.stdout | default('no output') }}"
+          - "DB indices: {{ db_indices_result.stdout | default('no output') }}"
+          - "BigInt migration: {{ bigint_result.stdout | default('no output') }}"
+      tags: [db_checks]
+
+    # ── PART 2: Maintenance & Cleanup ─────────────────────────────────────────
+    tags: [maintenance]
+
+    - name: Scan app data files (refresh DB file list)
+      ansible.builtin.command:
+        cmd: "docker exec --user {{ nc_web_user }} {{ nc_container }} php occ files:scan-app-data"
+      register: scan_result
+      changed_when: "'Scanned' in scan_result.stdout"
+      tags: [maintenance]
+
+    - name: Run maintenance repair — includes expensive mimetype migrations
+      ansible.builtin.command:
+        cmd: "docker exec --user {{ nc_web_user }} {{ nc_container }} php occ maintenance:repair --include-expensive"
+      register: repair_result
+      changed_when: "'mimetype' in repair_result.stdout or 'Repaired' in repair_result.stdout"
+      tags: [maintenance]
+
+    - name: Disable AppAPI app (if not in use)
+      ansible.builtin.command:
+        cmd: "docker exec --user {{ nc_web_user }} {{ nc_container }} php occ app:disable appapi"
+      register: disable_appapi_result
+      when: disable_appapi | bool
+      failed_when: false
+      changed_when: "'appapi disabled' in disable_appapi_result.stdout"
+      tags: [maintenance]
+
+    # ── PART 3: Health Check ──────────────────────────────────────────────────
+    tags: [health_check]
+
+    - name: Health check — verify Nextcloud responds on /status.php
+      ansible.builtin.command:
+        cmd: "docker exec {{ nc_container }} curl -s -f http://localhost/status.php"
+      register: health_check
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      until: health_check.rc == 0
+      changed_when: false
+      tags: [health_check]
+
+    - name: Fail with diagnostic output if health check did not pass
+      ansible.builtin.fail:
+        msg: >
+          Nextcloud health check failed after {{ health_check_retries }} attempts.
+          Last response: {{ health_check.stdout | default('(no output)') }}
+          Check container logs: docker logs {{ nc_container }}
+      when: health_check.rc != 0
+      tags: [health_check]
+
+    - name: Report health check result
+      ansible.builtin.debug:
+        msg: "Nextcloud is healthy: {{ health_check.stdout }}"
+      tags: [health_check]
+
+    - name: Post-maintenance summary
+      ansible.builtin.debug:
+        msg:
+          - "Nextcloud maintenance complete on {{ inventory_hostname }}."
+          - "Container: {{ nc_container }}"
+          - "Health check: PASSED"

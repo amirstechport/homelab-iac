@@ -1,0 +1,41 @@
+# Ghost Blog + MariaDB — Self-hosted publishing platform
+# See README.md for setup guide, reverse proxy config, and backup notes.
+
+services:
+
+  ghost_db:
+    image: mariadb:10.11
+    container_name: ghost_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "${GHOST_DB_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "${GHOST_DB_NAME:-ghost}"
+      MYSQL_USER: "${GHOST_DB_USER:-ghost_u}"
+      MYSQL_PASSWORD: "${GHOST_DB_PASSWORD}"
+    volumes:
+      - ${GHOST_DATA_DIR}/db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ghost_app:
+    image: ghost:latest
+    container_name: ghost_app
+    restart: unless-stopped
+    depends_on:
+      ghost_db:
+        condition: service_healthy
+    environment:
+      database__client: mysql
+      database__connection__host: ghost_db
+      database__connection__user: "${GHOST_DB_USER:-ghost_u}"
+      database__connection__password: "${GHOST_DB_PASSWORD}"
+      database__connection__database: "${GHOST_DB_NAME:-ghost}"
+      url: "${GHOST_URL}"
+    volumes:
+      - ${GHOST_DATA_DIR}/data:/var/lib/ghost/content
+    ports:
+      - "${GHOST_PORT:-2368}:2368"

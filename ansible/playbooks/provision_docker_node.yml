@@ -1,0 +1,231 @@
+---
+# provision_docker_node.yml — Install Docker CE + Portainer Agent on Debian/Ubuntu. See README.md.
+
+- name: Provision Docker node — Debian / Ubuntu
+  hosts: "{{ target_hosts | default('docker') }}"
+  become: true
+
+  vars:
+    # ── Docker Prerequisites ──────────────────────────────────────────────────
+    docker_prereq_packages:
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+
+    # ── Docker Packages ───────────────────────────────────────────────────────
+    # docker-compose-plugin replaces the legacy standalone docker-compose binary.
+    # Use `docker compose` (space, no hyphen) with this plugin.
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+
+    # ── Docker GPG Keyring ────────────────────────────────────────────────────
+    # Modern approach: store as a plain .asc file, reference via signed-by=
+    # Replaces the deprecated `apt-key` method.
+    docker_keyring_path: /etc/apt/keyrings/docker.asc
+
+    # ── Docker Group ──────────────────────────────────────────────────────────
+    # List of users to add to the docker group. Defaults to the Ansible
+    # connecting user. Add additional users by overriding this in group_vars.
+    docker_users:
+      - "{{ ansible_user }}"
+
+    # ── Portainer Agent ───────────────────────────────────────────────────────
+    # The agent registers this host with your Portainer instance.
+    # Pin portainer_agent_tag to a specific version for production stability.
+    portainer_agent_name: portainer_agent
+    portainer_agent_image: portainer/agent
+    portainer_agent_tag: latest
+    portainer_agent_port: "9001"   # Override if 9001 conflicts on your network
+
+    # ── SSH ───────────────────────────────────────────────────────────────────
+    ssh_config_path: /etc/ssh/sshd_config
+
+    # ── Reboot ────────────────────────────────────────────────────────────────
+    reboot_timeout: 300
+
+  tasks:
+
+    # ── Pre-flight Checks ─────────────────────────────────────────────────────
+
+    - name: Ensure OS facts are available
+      ansible.builtin.setup:
+        gather_subset:
+          - distribution
+          - architecture
+      when: ansible_distribution is not defined
+
+    - name: Assert target is a supported distribution
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution in ['Ubuntu', 'Debian']
+        fail_msg: >
+          Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_release }}.
+          This playbook targets Ubuntu 20.04+ or Debian 11+ only.
+        success_msg: "OS check passed: {{ ansible_distribution }} {{ ansible_distribution_release }}"
+
+    # ── Package Prerequisites ─────────────────────────────────────────────────
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install Docker prerequisite packages
+      ansible.builtin.apt:
+        name: "{{ docker_prereq_packages }}"
+        state: present
+
+    # ── Docker GPG Key (modern keyring method) ────────────────────────────────
+    # Stores the key in /etc/apt/keyrings/ and references it with signed-by=
+    # in the sources list. The `force: false` makes this idempotent — the key
+    # is only downloaded if the file does not already exist.
+
+    - name: Ensure /etc/apt/keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker GPG key
+      ansible.builtin.get_url:
+        url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+        dest: "{{ docker_keyring_path }}"
+        mode: '0644'
+        force: false
+
+    # ── Docker apt Repository ─────────────────────────────────────────────────
+    # Uses dpkg --print-architecture rather than hardcoding amd64.
+    # Supports arm64 for ARM-based Proxmox nodes or Raspberry Pi hosts.
+
+    - name: Get system architecture for Docker apt repo
+      ansible.builtin.command: dpkg --print-architecture
+      register: dpkg_arch
+      changed_when: false
+      check_mode: false
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ dpkg_arch.stdout }}
+          signed-by={{ docker_keyring_path }}]
+          https://download.docker.com/linux/{{ ansible_distribution | lower }}
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+
+    # ── Install Docker ────────────────────────────────────────────────────────
+
+    - name: Install Docker CE and Compose plugin
+      ansible.builtin.apt:
+        name: "{{ docker_packages }}"
+        state: present
+        update_cache: true
+      notify: Restart Docker
+
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+
+    - name: Add user(s) to docker group
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: docker
+        append: true
+      loop: "{{ docker_users }}"
+
+    - name: Enable and start Docker service
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Confirm Docker is running
+      ansible.builtin.command: docker --version
+      register: docker_version_check
+      changed_when: false
+
+    - name: Display Docker version
+      ansible.builtin.debug:
+        msg: "Docker ready: {{ docker_version_check.stdout }}"
+
+    # ── Portainer Agent ───────────────────────────────────────────────────────
+    # Deploys the Portainer Agent so this node appears in your Portainer UI.
+    # Requires the community.docker collection:
+    #   ansible-galaxy collection install community.docker
+
+    - name: Deploy Portainer Agent container
+      community.docker.docker_container:
+        name: "{{ portainer_agent_name }}"
+        image: "{{ portainer_agent_image }}:{{ portainer_agent_tag }}"
+        state: started
+        restart_policy: always
+        ports:
+          - "{{ portainer_agent_port }}:9001"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+          - /var/lib/docker/volumes:/var/lib/docker/volumes
+
+    # ── SSH Hardening ─────────────────────────────────────────────────────────
+    # Idempotent — safe to run even if provision_base.yml was already applied.
+    # Handlers below ensure SSH only restarts if a change was actually made.
+
+    - name: Enforce SSH — enable public key authentication
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PubkeyAuthentication'
+        line: 'PubkeyAuthentication yes'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart SSH
+
+    - name: Enforce SSH — disable password authentication
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart SSH
+
+    - name: Enforce SSH — disable root login
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart SSH
+
+    # ── Reboot ────────────────────────────────────────────────────────────────
+
+    - name: Reboot host and wait for it to return
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        msg: "Reboot triggered by provision_docker_node.yml"
+
+    - name: Confirm host is back online
+      ansible.builtin.ping:
+
+    - name: Post-provision summary
+      ansible.builtin.debug:
+        msg:
+          - "Host {{ inventory_hostname }} provisioned successfully."
+          - "Docker: {{ docker_version_check.stdout }}"
+          - "Portainer Agent running on port {{ portainer_agent_port }}."
+          - "NOTE: Log out and back in to activate docker group membership for: {{ docker_users | join(', ') }}"
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted

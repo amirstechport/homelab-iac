@@ -1,0 +1,11 @@
+# Cloudflare Tunnel — Exposes internal services publicly without open ports
+# See README.md for tunnel creation and public hostname configuration.
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudtunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN}"

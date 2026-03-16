@@ -1,0 +1,17 @@
+# Private homelab context files — never commit these
+CLAUDE.md
+AGENT_GOVERNANCE.md
+
+# Ansible live inventory — contains real IPs
+ansible/inventory/hosts.ini
+
+# Environment files with real secrets
+.env
+**/.env
+
+# Traefik secrets and live cert store — never commit these
+docker/traefik/cf_api_token.txt
+docker/traefik/acme.json
+
+# macOS
+.DS_Store

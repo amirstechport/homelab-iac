@@ -1,0 +1,15 @@
+# Deunhealth — Automatically restarts containers that fail their health check
+# See README.md for how to opt containers in with the required label.
+
+services:
+  deunhealth:
+    image: qmcgaw/deunhealth:latest
+    container_name: deunhealth
+    restart: always
+    network_mode: none
+    environment:
+      LOG_LEVEL: "${DEUNHEALTH_LOG_LEVEL:-info}"
+      HEALTH_SERVER_ADDRESS: "127.0.0.1:9999"
+      TZ: "${TZ:-UTC}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro

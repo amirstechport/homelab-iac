@@ -1,0 +1,20 @@
+# Cloudflare DDNS — Keeps DNS A records updated when your public IP changes
+# See README.md for API token setup and domain configuration.
+
+services:
+  cloudflare-ddns:
+    image: favonia/cloudflare-ddns:latest
+    container_name: cloudflare-ddns
+    restart: always
+    network_mode: host
+    user: "${CF_DDNS_USER:-1000:1000}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN}"
+      DOMAINS: "${CF_DOMAINS}"
+      PROXIED: "${CF_PROXIED:-false}"
+      IP6_PROVIDER: "${CF_IP6_PROVIDER:-none}"

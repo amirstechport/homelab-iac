@@ -1,0 +1,115 @@
+---
+# maintenance.yml — Day-2 apt update/upgrade/cleanup for Debian/Ubuntu fleet. See README.md.
+
+- name: Day-2 maintenance — apt update, upgrade, and cleanup
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  serial: "{{ batch_size | default('100%') }}"  # Set to e.g. 3 to roll through hosts in batches
+
+  vars:
+    reboot_if_needed: false    # Override with -e "reboot_if_needed=true"
+    reboot_timeout: 300
+    apt_cache_max_age: 3600    # 1 hour — skip cache refresh if recently updated
+
+  tasks:
+
+    # ── Update ────────────────────────────────────────────────────────────────
+    # Tags: update
+
+    - name: Refresh apt package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: "{{ apt_cache_max_age }}"
+      tags: [update, upgrade]
+
+    - name: Collect list of upgradable packages
+      ansible.builtin.apt:
+        upgrade: "no"          # List mode — no changes applied
+      register: apt_check
+      check_mode: true         # Forces list-only even without --check flag
+      changed_when: false
+      tags: [update]
+
+    - name: Report upgradable packages
+      ansible.builtin.debug:
+        msg: >
+          {{ inventory_hostname }}: {{ apt_check.stdout_lines | default(['(nothing to report)']) | join(', ') }}
+      tags: [update]
+
+    # ── Upgrade ───────────────────────────────────────────────────────────────
+    # Tags: upgrade
+
+    - name: Apply full dist-upgrade
+      ansible.builtin.apt:
+        upgrade: dist
+      register: upgrade_result
+      tags: [upgrade]
+
+    - name: Report upgrade results
+      ansible.builtin.debug:
+        msg: >
+          {{ inventory_hostname }}:
+          {{ upgrade_result.stdout_lines | default(['No packages upgraded.']) | join('\n') }}
+      tags: [upgrade]
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+    # Tags: cleanup
+
+    - name: Remove unused dependency packages (autoremove)
+      ansible.builtin.apt:
+        autoremove: true
+        purge: true            # Also remove leftover config files
+      register: autoremove_result
+      tags: [cleanup]
+
+    - name: Clean stale package cache (autoclean)
+      ansible.builtin.apt:
+        autoclean: true
+      tags: [cleanup]
+
+    - name: Report cleanup results
+      ansible.builtin.debug:
+        msg: >
+          {{ inventory_hostname }}:
+          Autoremove — {{ autoremove_result.stdout_lines | default(['Nothing removed.']) | join(', ') }}
+      tags: [cleanup]
+
+    # ── Reboot Check ──────────────────────────────────────────────────────────
+    # Tags: reboot_check
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+      tags: [reboot_check]
+
+    - name: Report reboot status
+      ansible.builtin.debug:
+        msg: >
+          {{ inventory_hostname }}:
+          {% if reboot_required_file.stat.exists %}
+          REBOOT REQUIRED — a kernel or core library was updated.
+          {% if not reboot_if_needed %}
+          Automatic reboot is disabled (reboot_if_needed=false).
+          Reboot manually or re-run with -e "reboot_if_needed=true".
+          {% endif %}
+          {% else %}
+          No reboot required.
+          {% endif %}
+      tags: [reboot_check]
+
+    - name: Reboot host if required and reboot_if_needed is true
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        msg: "Scheduled reboot triggered by maintenance.yml — kernel or core library updated"
+      when:
+        - reboot_required_file.stat.exists
+        - reboot_if_needed | bool
+      tags: [reboot_check]
+
+    - name: Confirm host is back online after reboot
+      ansible.builtin.ping:
+      when:
+        - reboot_required_file.stat.exists
+        - reboot_if_needed | bool
+      tags: [reboot_check]

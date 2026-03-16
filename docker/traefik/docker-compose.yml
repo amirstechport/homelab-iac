@@ -1,0 +1,48 @@
+# =============================================================================
+# Traefik — Cloud-Native Reverse Proxy & TLS Terminator
+# homelab-iac | docker/traefik/docker-compose.yml
+# =============================================================================
+# See README.md in this folder for full setup and configuration guide.
+# =============================================================================
+
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: unless-stopped
+
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    environment:
+      CF_DNS_API_TOKEN_FILE: /run/secrets/cf_api_token
+      TRAEFIK_DASHBOARD_CREDENTIALS: "${TRAEFIK_DASHBOARD_CREDENTIALS}"
+      NO_PROXY: "${NO_PROXY:-}"
+
+    secrets:
+      - cf_api_token
+
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${TRAEFIK_DATA_DIR}/traefik.yml:/traefik.yml:ro
+      - ${TRAEFIK_DATA_DIR}/acme.json:/acme.json
+      - ${TRAEFIK_DATA_DIR}/dyconfig:/dyconfig:ro
+      - ${TRAEFIK_DATA_DIR}/logs:/var/log/traefik
+
+    networks:
+      - proxy
+
+secrets:
+  cf_api_token:
+    file: ${TRAEFIK_DATA_DIR}/cf_api_token.txt
+
+networks:
+  proxy:
+    external: true

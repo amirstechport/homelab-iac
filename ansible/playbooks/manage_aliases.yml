@@ -1,0 +1,78 @@
+---
+# manage_aliases.yml — Deploy shell aliases to ~/.bash_aliases across the fleet. See README.md.
+
+- name: Manage shell aliases on remote hosts
+  hosts: "{{ target_hosts | default('all') }}"
+  become: false
+  gather_facts: true
+
+  vars:
+    aliases_file: "{{ ansible_env.HOME }}/.bash_aliases"
+    bashrc_file: "{{ ansible_env.HOME }}/.bashrc"
+
+    # Define your fleet-wide aliases here.
+    # Each entry requires:
+    #   name:    short label used in the alias line comment (no spaces)
+    #   command: the full shell command the alias expands to
+    shell_aliases:
+      - name: dod
+        command: "docker system prune --all --force --volumes"
+        description: "Nuclear Docker cleanup — removes all unused images, containers, networks, and volumes"
+      - name: dps
+        command: "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'"
+        description: "Formatted docker ps output"
+      - name: dlogs
+        command: "docker logs --tail 50 --follow"
+        description: "Tail last 50 lines of a container log and follow"
+
+  tasks:
+
+    - name: Assert shell is bash
+      ansible.builtin.assert:
+        that:
+          - ansible_env.SHELL is search('bash') or ansible_user_shell is not defined
+        fail_msg: "This playbook targets bash shells. Detected shell: {{ ansible_env.SHELL }}"
+        success_msg: "Shell check passed."
+      ignore_errors: true  # Non-fatal — still attempt deployment
+
+    # ── Ensure dotfiles exist ─────────────────────────────────────────────────
+
+    - name: Ensure ~/.bash_aliases file exists
+      ansible.builtin.file:
+        path: "{{ aliases_file }}"
+        state: touch
+        mode: '0644'
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Ensure ~/.bashrc sources ~/.bash_aliases
+      ansible.builtin.blockinfile:
+        path: "{{ bashrc_file }}"
+        marker: "# {mark} ANSIBLE MANAGED — bash_aliases source"
+        block: |
+          if [ -f ~/.bash_aliases ]; then
+              . ~/.bash_aliases
+          fi
+        create: true
+
+    # ── Deploy aliases ────────────────────────────────────────────────────────
+
+    - name: Deploy shell aliases
+      ansible.builtin.lineinfile:
+        path: "{{ aliases_file }}"
+        regexp: "^alias {{ item.name }}="
+        line: "alias {{ item.name }}='{{ item.command }}'  # {{ item.description | default('') }}"
+        state: present
+      loop: "{{ shell_aliases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: alias_results
+
+    - name: Report alias deployment results
+      ansible.builtin.debug:
+        msg: >
+          {{ inventory_hostname }}: alias '{{ item.item.name }}' —
+          {{ 'added/updated' if item.changed else 'already present' }}
+      loop: "{{ alias_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"

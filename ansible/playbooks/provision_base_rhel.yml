@@ -1,0 +1,118 @@
+---
+# provision_base_rhel.yml — Baseline configuration for AlmaLinux/Rocky/RHEL hosts. See README.md.
+
+- name: Baseline provision — AlmaLinux / Rocky Linux / RHEL
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+
+  vars:
+    ssh_config_path: /etc/ssh/sshd_config
+    reboot_timeout: 300
+
+    # Packages installed on every managed RHEL-family host.
+    # bind-utils provides dig/nslookup (equivalent of dnsutils on Debian).
+    # iputils provides ping (package name differs from Debian's iputils-ping).
+    base_packages:
+      - nano
+      - bash-completion
+      - curl
+      - unzip
+      - net-tools
+      - iputils
+      - traceroute
+      - bind-utils
+      - qemu-guest-agent
+      - ca-certificates
+
+  tasks:
+
+    # ── Pre-flight ────────────────────────────────────────────────────────────
+
+    - name: Ensure OS facts are available
+      ansible.builtin.setup:
+        gather_subset:
+          - distribution
+      when: ansible_distribution is not defined
+
+    - name: Assert target is a supported RHEL-family distribution
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == 'RedHat'
+        fail_msg: >
+          Unsupported OS family: {{ ansible_os_family }} ({{ ansible_distribution }}).
+          This playbook targets AlmaLinux, Rocky Linux, or RHEL only.
+          For Debian/Ubuntu, use provision_base.yml instead.
+        success_msg: "OS check passed: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    # ── Package Management ────────────────────────────────────────────────────
+
+    - name: Update DNF package cache
+      ansible.builtin.dnf:
+        update_cache: true
+
+    - name: Install base packages
+      ansible.builtin.dnf:
+        name: "{{ base_packages }}"
+        state: present
+
+    - name: Remove unused packages (autoremove)
+      ansible.builtin.dnf:
+        autoremove: true
+
+    # ── QEMU Guest Agent ──────────────────────────────────────────────────────
+
+    - name: Enable and start qemu-guest-agent
+      ansible.builtin.systemd:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+      failed_when: false
+
+    # ── SSH Hardening ─────────────────────────────────────────────────────────
+    # WARNING: Ensure your SSH public key is on the target BEFORE running this.
+    # Locking out password auth without a key deployed = no way back in.
+    # Note: RHEL-family uses `sshd` (not `ssh`) as the service name.
+
+    - name: Enforce SSH — enable public key authentication
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PubkeyAuthentication'
+        line: 'PubkeyAuthentication yes'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart sshd
+
+    - name: Enforce SSH — disable password authentication
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart sshd
+
+    - name: Enforce SSH — disable root login
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart sshd
+
+    # ── Reboot ────────────────────────────────────────────────────────────────
+
+    - name: Reboot host and wait for it to return
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        msg: "Reboot triggered by provision_base_rhel.yml"
+
+    - name: Confirm host is back online
+      ansible.builtin.ping:
+
+  handlers:
+    # RHEL-family SSH daemon is `sshd`, not `ssh`
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted

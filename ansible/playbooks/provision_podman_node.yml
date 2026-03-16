@@ -1,0 +1,147 @@
+---
+# provision_podman_node.yml — Install Podman + podman-compose on AlmaLinux/Rocky/RHEL. See README.md.
+
+- name: Provision Podman node — AlmaLinux / Rocky Linux / RHEL
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+
+  vars:
+    podman_packages:
+      - podman
+      - bash-completion   # Required for podman completion to write output
+      - python3-pip       # podman-compose is installed via pip
+
+    podman_user: "{{ ansible_user }}"
+    enable_podman_socket: true
+    ssh_config_path: /etc/ssh/sshd_config
+    reboot_timeout: 300
+
+  tasks:
+
+    # ── Pre-flight ────────────────────────────────────────────────────────────
+
+    - name: Ensure OS facts are available
+      ansible.builtin.setup:
+        gather_subset:
+          - distribution
+      when: ansible_distribution is not defined
+
+    - name: Assert target is a supported RHEL-family distribution
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == 'RedHat'
+        fail_msg: >
+          Unsupported OS family: {{ ansible_os_family }} ({{ ansible_distribution }}).
+          This playbook targets AlmaLinux, Rocky Linux, or RHEL only.
+          For Debian/Ubuntu Docker provisioning, use provision_docker_node.yml.
+        success_msg: "OS check passed: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    # ── Package Installation ──────────────────────────────────────────────────
+
+    - name: Update DNF cache
+      ansible.builtin.dnf:
+        update_cache: true
+
+    - name: Install Podman and prerequisites
+      ansible.builtin.dnf:
+        name: "{{ podman_packages }}"
+        state: present
+
+    - name: Install podman-compose via pip
+      ansible.builtin.pip:
+        name: podman-compose
+        state: present
+        executable: pip3
+
+    # ── Podman Configuration ──────────────────────────────────────────────────
+
+    - name: Enable Podman bash auto-completion
+      ansible.builtin.shell: |
+        podman completion bash > /etc/bash_completion.d/podman
+      args:
+        executable: /bin/bash
+        creates: /etc/bash_completion.d/podman  # Idempotent — skip if file exists
+
+    - name: Enable Podman system socket (for API access)
+      ansible.builtin.systemd:
+        name: podman.socket
+        enabled: true
+        state: started
+      when: enable_podman_socket | bool
+      failed_when: false  # Socket may not be present on all RHEL versions
+
+    - name: Enable lingering for rootless Podman user
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ podman_user }}"
+      changed_when: false
+      # Lingering allows user services to run without an active login session
+
+    - name: Verify Podman installation
+      ansible.builtin.command: podman --version
+      register: podman_version_check
+      changed_when: false
+
+    - name: Verify podman-compose installation
+      ansible.builtin.command: podman-compose --version
+      register: podman_compose_version_check
+      changed_when: false
+
+    - name: Display version info
+      ansible.builtin.debug:
+        msg:
+          - "Podman: {{ podman_version_check.stdout }}"
+          - "podman-compose: {{ podman_compose_version_check.stdout }}"
+
+    # ── SSH Hardening ─────────────────────────────────────────────────────────
+    # Idempotent — safe to run even if provision_base_rhel.yml was already applied.
+
+    - name: Enforce SSH — enable public key authentication
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PubkeyAuthentication'
+        line: 'PubkeyAuthentication yes'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart sshd
+
+    - name: Enforce SSH — disable password authentication
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart sshd
+
+    - name: Enforce SSH — disable root login
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Restart sshd
+
+    # ── Reboot ────────────────────────────────────────────────────────────────
+
+    - name: Reboot host and wait for it to return
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        msg: "Reboot triggered by provision_podman_node.yml"
+
+    - name: Confirm host is back online
+      ansible.builtin.ping:
+
+    - name: Post-provision summary
+      ansible.builtin.debug:
+        msg:
+          - "Host {{ inventory_hostname }} provisioned successfully."
+          - "{{ podman_version_check.stdout }}"
+          - "{{ podman_compose_version_check.stdout }}"
+          - "Rootless Podman user: {{ podman_user }}"
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
