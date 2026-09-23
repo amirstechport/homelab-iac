@@ -94,7 +94,7 @@ scrape_configs:
 | Variable | Default | Description |
 |---|---|---|
 | `OBSERVABILITY_DATA_DIR` | — | **Required.** Host path containing config files |
-| `GRAFANA_ADMIN_PASSWORD` | `changeme` | Grafana admin password — change immediately |
+| `GRAFANA_ADMIN_PASSWORD` | none, required | Grafana admin password. The stack will not start until it is set |
 | `GRAFANA_ADMIN_USER` | `admin` | Grafana admin username |
 | `GRAFANA_PORT` | `3000` | Host port for Grafana |
 | `PROMETHEUS_PORT` | `9090` | Host port for Prometheus |
